@@ -51,7 +51,7 @@ fh = {'source_list': dirs['plastic'] + 'country_list.in',
       'sink_list': dirs['plastic'] + 'sink_list.in',
       'grid':    dirs['grid'] + 'griddata_land.nc',
       'clist':   dirs['plastic'] + 'country_list.in',
-      'traj':    sorted(glob(dirs['traj'] + 'Terrestrial_' + param['mode'] + '*.zarr'))}
+      'traj':    sorted(glob(dirs['traj'] + 'Terrestrial_' + param['mode'] + '*.nc'))}
 
 # Convert sinking rates and beaching rates to correct units
 param['us'] = 1/(param['us_d']*3600*24)
@@ -146,8 +146,8 @@ def convert_events(fh_list, dt, us, ub, n_events, **kwargs):
     data_list = []
 
     # Open all data
-    for fhi, fh in tqdm(enumerate(fh_list), total=len(fh_list)):
-        with xr.open_zarr(fh, mask_and_scale=False) as file:
+    for fhi, fh in enumerate(fh_list):
+        with xr.open_dataset(fh, mask_and_scale=False) as file:
             e_num = file['e_num'].values
             n_traj = np.shape(e_num)[0] # Number of trajectories in file
 
@@ -305,13 +305,12 @@ tmatrix = xr.DataArray(tmatrix, coords=[source_list['Country Name'],
 
 total_stats = np.zeros((4,), dtype=np.int64)
 
+pbar = tqdm(total=len(fh['traj']))
+
 for year in np.arange(param['y0'], param['y1']+1):
     for month in np.arange(12):
         for release in np.arange(4):
-            print('Year ' + str(year) + '/' + str(param['y1']))
-            print('Month ' + str(month+1) + '/12')
-            print('Release' + str(release+1) + '/4')
-            yearmonth_fh = sorted(glob(dirs['traj'] + 'Terrestrial_' + param['mode'] + '_' + str(year) + '_' + str(month+1) + '_' + str(release) + '.zarr'))
+            yearmonth_fh = sorted(glob(dirs['traj'] + 'Terrestrial_' + param['mode'] + '_' + str(year) + '_' + str(month+1) + '_' + str(release) + '.nc'))
 
             data, stats = convert_events(yearmonth_fh, param['dt'], param['us'], param['ub'], 35,
                                          particles_per_file=325233)
@@ -333,10 +332,7 @@ for year in np.arange(param['y0'], param['y1']+1):
                                      stats['total_encounters'],
                                      stats['total_full_events']])
 
-print('Total particles reaching seychelles: ' + str(total_stats[0]))
-print('Total particles released: ' + str(total_stats[1]))
-print('Total events: ' + str(total_stats[2]))
-print('Total full events: ' + str(total_stats[3]))
+            pbar.update(1)
 
 save_fh_f = dirs['script'] + '/terrestrial_flux_' + param['mode'] + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.nc'
 save_fh_t = dirs['script'] + '/terrestrial_drift_time_' + param['mode'] + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) +'.nc'
@@ -347,5 +343,5 @@ for matrix in [fmatrix, tmatrix]:
     matrix.attrs['r_frac'] = param['r_frac']
     matrix.attrs['c_frac'] = param['c_frac']
 
-fmatrix.to_netcdf(save_fh_f)
-tmatrix.to_netcdf(save_fh_t)
+fmatrix.to_netcdf(save_fh_f, encoding={"__xarray_dataarray_variable__": {'zlib': True, 'complevel': 5}})
+tmatrix.to_netcdf(save_fh_t, encoding={"__xarray_dataarray_variable__": {'zlib': True, 'complevel': 5}})

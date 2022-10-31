@@ -43,7 +43,7 @@ param = { # Runtime parameters
          'time': argv[4],
 
          # Sink sites
-         'sites': np.array([1]),
+         'sites': np.array([1,2,3,4]),
          }
 
 # DIRECTORIES
@@ -57,7 +57,7 @@ dirs = {'script': os.path.dirname(os.path.realpath(__file__)),
 fh = {'grid':    dirs['grid'] + 'griddata.nc',
       'clist':   dirs['plastic'] + 'country_list.in',
       'sink_list': dirs['plastic'] + 'sink_list.in',
-      'traj':    sorted(glob(dirs['traj'] + 'Marine_' + param['mode'] + '*.zarr'))}
+      'traj':    sorted(glob(dirs['traj'] + 'Marine_' + param['mode'] + '*.nc'))}
 
 # Convert sinking rates and beaching rates to correct units
 param['us'] = 1/(param['us_d']*3600*24)
@@ -152,9 +152,9 @@ def convert_events(fh_list, dt, us, ub, n_events, **kwargs):
     data_list = []
 
     # Open all data
-    for fhi, fh in tqdm(enumerate(fh_list), total=len(fh_list)):
+    for fhi, fh in enumerate(fh_list):
         try:
-            with xr.open_zarr(fh, mask_and_scale=False) as file:
+            with xr.open_dataset(fh, mask_and_scale=False) as file:
                 e_num = file['e_num'].values
                 n_traj = np.shape(e_num)[0] # Number of trajectories in file
 
@@ -314,13 +314,12 @@ else:
     ftmatrix = xr.DataArray(ftmatrix, coords=[lat, lon, source_time],
                            dims=['latitude', 'longitude', 'source_time'])
 
+pbar = tqdm(total=len(fh['traj']))
+
 for year in np.arange(param['y0'], param['y1']+1):
     for month in np.arange(12):
         for release in np.arange(4):
-            print('Year ' + str(year) + '/' + str(param['y1']))
-            print('Month ' + str(month+1) + '/12')
-            print('Release' + str(release+1) + '/4')
-            yearmonth_fh = sorted(glob(dirs['traj'] + 'Marine_' + param['mode'] + '_' + str(year) + '_' + str(month+1) + '_' + str(release) + '.zarr'))
+            yearmonth_fh = sorted(glob(dirs['traj'] + 'Marine_' + param['mode'] + '_' + str(year) + '_' + str(month+1) + '_' + str(release) + '.nc'))
 
             data, stats = convert_events(yearmonth_fh, param['dt'], param['us'], param['ub'], 25,
                                          particles_per_file=325233)
@@ -352,6 +351,8 @@ for year in np.arange(param['y0'], param['y1']+1):
                                            weights=(data[data['sink_iso'].isin(param['sites'])]['plastic_flux']*
                                                     data[data['sink_iso'].isin(param['sites'])]['days_at_sea']))[0]
 
+            pbar.update(1)
+
 array_str = np.array2string(param['sites'], separator='-').translate({ord(i): None for i in '[]'})
 save_fh_f = dirs['script'] + '/marine_' + param['time'] + '_flux_' + param['mode'] + '_' + array_str + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.nc'
 save_fh_ft = dirs['script'] + '/marine_' + param['time'] + '_drift_time_' + param['mode'] + '_' + array_str + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.nc'
@@ -360,5 +361,5 @@ for matrix in [fmatrix, ftmatrix]:
     matrix.attrs['us'] = param['us_d']
     matrix.attrs['ub'] = param['ub_d']
 
-fmatrix.to_netcdf(save_fh_f)
-ftmatrix.to_netcdf(save_fh_ft)
+fmatrix.to_netcdf(save_fh_f, encoding={"__xarray_dataarray_variable__": {'zlib': True, 'complevel': 5}})
+ftmatrix.to_netcdf(save_fh_ft, encoding={"__xarray_dataarray_variable__": {'zlib': True, 'complevel': 5}})
