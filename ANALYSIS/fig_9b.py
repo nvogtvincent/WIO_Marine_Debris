@@ -37,7 +37,7 @@ param = {# Analysis parameters
                 'Pemba', 'Socotra', 'Chagos'],
 
          # Modes for comparison
-         'mode': 'DMI',
+         'mode': 'NINO34',
 
          # Filtering parameters
          'lead': 0, # Lead (months) for climate index, (i.e. +ve -> index leads observations)

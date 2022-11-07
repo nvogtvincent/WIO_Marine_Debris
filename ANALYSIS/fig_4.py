@@ -22,9 +22,6 @@ param = {# Analysis parameters
          # Physics
          'mode': argv[3],
 
-         # Name
-         'name': argv[4],
-
          # CMAP
          'cmap': cmr.guppy_r,
          'write_cmap': False, # Whether to write cmap data (good w/ 100/0010)
@@ -34,6 +31,11 @@ param = {# Analysis parameters
          'drift': False,
          'legend': True,
          'export': True}
+
+try:
+    param['name'] = argv[4]
+except:
+    param['name'] = ''
 
 # DIRECTORIES
 dirs = {'script': os.path.dirname(os.path.realpath(__file__)),

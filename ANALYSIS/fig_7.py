@@ -35,7 +35,7 @@ param = {'degrade': 12,                            # Degradation factor
          'time': argv[4],
 
          # Sink sđites
-         'sites': np.array([13,14,15,16,17,18]),
+         'sites': np.array([1,2,3,4]),
 
          # Set significance threshold (for log transform)
          'sig_thresh': 1e-9}
