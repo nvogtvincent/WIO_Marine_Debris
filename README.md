@@ -11,6 +11,7 @@ MATRICES/         Postprocessed terrestrial and marine matrices
 PLASTIC_DATA/     List of input and sink countries used in analysis 
 REFERENCE/        Reference datasets for plotting/analyses
 SHIPPING/         Reference shipping density file used for Figure 5
+SIM/              Scripts to rerun particle-tracking analyses (relies on ocean/wind/wave data as described in manuscript)
 TRAJ/             Postprocessing scripts to generate matrices from model output  
 ```
 
