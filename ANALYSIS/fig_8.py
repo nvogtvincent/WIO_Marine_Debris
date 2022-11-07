@@ -33,8 +33,8 @@ param = {# Analysis parameters
          'mode': ['CS0', 'CS1', 'CS3', 'CS5'],
 
          # Sink sites
-         'sites': np.array([1,2,3,4]),
-         'label': 'Aldabra_Group',
+         'sites': np.array([13,14,15,16,17,18]),
+         'label': 'Seychelles_Plateau',
         }
 
 # DIRECTORIES
