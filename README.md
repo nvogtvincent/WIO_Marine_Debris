@@ -17,7 +17,7 @@ TRAJ/             Postprocessing scripts to generate matrices from model output
 
 ## User guide
 
-Firstly, set up a conda environment with 
+Firstly, set up a conda environment with the `environment.yml` file in the root directory. Alternatively, the packages needed for these analyses are numpy, matplotlib, xarray, xskillscore, pandas, cmasher, scipy, scikit-image, gdal, cartopy, resterio, geopandas, and tqdm.  
 
 ### I want to generate results using a new combination of beaching and sinking rate, and windage
 1. Retrieve the trajectory files for the physical scenario of interest from the BODC repository, and put them in in the relevant subdirectory in `TRAJ`. For instance, for the terrestrial CS3 scenario, you should put all 1056 terrestrial CS3 netcdf files in `TRAJ/TER/CS3/`; for the marine C0 scenario, you should put all 960 marine C0 netcdf files in `TRAJ/MAR/C0`, etc.
