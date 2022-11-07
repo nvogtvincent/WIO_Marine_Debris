@@ -54,7 +54,7 @@ except:
 
 # DIRECTORIES
 dirs = {'script': os.path.dirname(os.path.realpath(__file__)),
-        'data': os.path.dirname(os.path.realpath(__file__)) + '/../POSTPROC/',
+        'data': os.path.dirname(os.path.realpath(__file__)) + '/../MATRICES/',
         'ref': os.path.dirname(os.path.realpath(__file__)) + '/../REFERENCE/',
         'fig': os.path.dirname(os.path.realpath(__file__)) + '/../FIGURES/'}
 
@@ -129,7 +129,7 @@ ax = []
 ax.append(f.add_subplot(gs[0, 0], projection = ccrs.PlateCarree())) # Main figure (eof)
 ax.append(f.add_subplot(gs[0, 1])) # Colorbar for main figure
 
-land_10m = cfeature.NaturalEarthFeature('physical', 'land', '10m',
+land_10m = cfeature.NaturalEarthFeature('physical', 'land', '50m',
                                         edgecolor='white',
                                         facecolor='black',
                                         zorder=1)

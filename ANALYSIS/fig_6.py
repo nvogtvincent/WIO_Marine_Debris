@@ -1,228 +1,152 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 """
-Carry out EOF analysis on MD data
+Analyse time-series of marine debris accumulation at sites of interest
 @author: noam
 """
-
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import cmasher as cmr
 import xarray as xr
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-import xskillscore as xs
-from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import FormatStrFormatter
 from sys import argv
-from scipy import signal
-from scipy.fft import rfft, rfftfreq
 
 # PARAMETERS
-param = {'degrade': 12,                            # Degradation factor
-         'lon_range': [20, 130],                   # Longitude range for output
-         'lat_range': [-40, 30],                   # Latitude range for output
+param = {# Analysis parameters
+         'us_d': float(argv[1]),    # Sinking timescale (days)
+         'ub_d': float(argv[2]),      # Beaching timescale (days)
 
-         # Analysis parameters
-         'us_d': int(argv[1]),    # Sinking timescale (days)
-         'ub_d': int(argv[2]),     # Beaching timescale (days)
+         # Sink
+         'sink': [['Aldabra', 'Assomption', 'Cosmoledo', 'Astove'],
+                  ['Mahé', 'Fregate', 'Silhouette', 'Praslin', 'Denis', 'Bird']],
+         'sink_name': ['Aldabra Group', 'Seychelles Plateau'],
+         'linestyle': ['-', '--'],
+         'linecolor': ['firebrick', 'darkblue'],
+         'symbol'   : ['o', 's'],
 
          # Physics
-         'physics': argv[3],
+         'mode': argv[3],
 
-         # Source/sink time
-         'time': argv[4],
+         # CMAP
+         'cmap': cmr.guppy_r,
+         'write_cmap': True, # Whether to write cmap data (good w/ 100/0010)
+         'n_source': 10,
 
-         # Sink sđites
-         'sites': np.array([1,2,3,4]),
-
-         # Set significance threshold (for log transform)
-         'sig_thresh': 1e-9}
-
-try:
-    param['name'] = argv[5] + ' '
-except:
-    param['name'] = ''
+         # Export
+         'name': argv[4],
+         'export': True}
 
 # DIRECTORIES
 dirs = {'script': os.path.dirname(os.path.realpath(__file__)),
-        'data': os.path.dirname(os.path.realpath(__file__)) + '/../POSTPROC/',
-        'ref': os.path.dirname(os.path.realpath(__file__)) + '/../REFERENCE/',
+        'data': os.path.dirname(os.path.realpath(__file__)) + '/../MATRICES/',
+        'plastic': os.path.dirname(os.path.realpath(__file__)) + '/../PLASTIC_DATA/',
         'fig': os.path.dirname(os.path.realpath(__file__)) + '/../FIGURES/'}
 
 # FILE HANDLES
-array_str = np.array2string(param['sites'], separator='-').translate({ord(i): None for i in '[]'})
-fh = {'flux': dirs['data'] + '/marine_' + param['time'] + '_flux_' + param['physics'] + '_' + array_str + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.nc'}
-time_var = 'sink_time' if param['time'] == 'sink' else 'source_time'
+fh = {'flux': dirs['data'] + '/terrestrial_flux_' + param['mode'] + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.nc',
+      'source_list': dirs['plastic'] + 'country_list.in',
+      'sink_list': dirs['plastic'] + 'sink_list.in',
+      'cmap': dirs['fig'] + 'cmap_data.pkl',
+      'fig': dirs['fig'] + 'time_series_' + param['mode'] + '_s' + str(param['us_d']) + '_b' + str(param['ub_d'])}
 
 ##############################################################################
-# LOAD DATA                                                                  #
+# EXTRACT DATA                                                               #
 ##############################################################################
 
-# Only use 1995-2012 for sink (2-year spinup, NOT valid for us > 1 year)
-if param['time'] == 'sink':
-    fmatrix = xr.open_dataarray(fh['flux'])[:, :, 24:240]
-else:
-    fmatrix = xr.open_dataarray(fh['flux'])[:]
-
-# Degrade resolution
-fmatrix = fmatrix.coarsen(dim={'longitude': param['degrade'], 'latitude': param['degrade'], time_var: 1}).sum()
-fmatrix = fmatrix.transpose(time_var, 'longitude', 'latitude')
-
-lons, lats = np.meshgrid(fmatrix.coords['longitude'], fmatrix.coords['latitude'])
-
-# Log transform data:
-# We release 36*4*(12^2) particles per degree grid cell (except for edge cases)
-# so let's set everything less than 0.1% of this to 'negligible'.
-sig_thresh = 36*4*param['degrade']*param['degrade']*param['sig_thresh']
-fmatrix = fmatrix.where(fmatrix > sig_thresh)
-fmatrix = fmatrix.fillna(sig_thresh)
-fmatrix = np.log10(fmatrix)
-
-# Remove mean
-fmatrix = fmatrix - fmatrix.mean(dim=time_var)
-fmatrix.values = signal.detrend(fmatrix.values, axis=0, type='linear')
+fmatrix = xr.open_dataarray(fh['flux'])
 
 ##############################################################################
-# CARRY OUT FOURIER TRANSFORM                                                #
-##############################################################################
-omega = 2*np.pi
-
-yf = rfft(fmatrix.values, axis=0)
-xf = rfftfreq(len(fmatrix.coords[time_var]), 1/12)
-
-seas_freq_idx = np.where(xf == 1)
-phase = -np.angle(yf[seas_freq_idx, :, :])[0, 0, :, :]
-
-ts = np.arange(0, len(fmatrix.coords[time_var])/12, 1/12) + 1/24
-ts_arr = np.zeros_like(fmatrix.values)
-phase_arr = np.zeros_like(fmatrix.values)
-
-ts_arr[:] = ts[:, np.newaxis, np.newaxis]
-phase_arr[:] = phase[np.newaxis, :, :]
-
-seas_clim = np.cos((omega*ts_arr) - phase_arr)
-seas_clim = xr.DataArray(seas_clim, coords={time_var: fmatrix.coords[time_var],
-                                            'longitude': fmatrix.coords['longitude'],
-                                            'latitude': fmatrix.coords['latitude']})
-
-##############################################################################
-# CALCULATE CORRELATION                                                      #
+# PLOT SIMPLE TIME SERIES AND SEASONAL CYCLE                                 #
 ##############################################################################
 
-corr = xs.pearson_r(fmatrix, seas_clim, dim=time_var)
-corr_p_eff = xs.pearson_r_eff_p_value(fmatrix, seas_clim, dim=time_var)
+f, ax = plt.subplots(1, 1, figsize=(20, 6))
 
-##############################################################################
-# PLOT                                                                       #
-##############################################################################
+# FIRSTLY GENERATE A TIME-SERIES
+fmatrix_ts = fmatrix[:, :, :, 24:264].sum(dim=('source_time', 'source'))
 
-f = plt.figure(figsize=(20, 11.9), constrained_layout=True)
-gs = GridSpec(1, 2, figure=f, width_ratios=[0.99, 0.01])
-ax = []
-ax.append(f.add_subplot(gs[0, 0], projection = ccrs.PlateCarree())) # Main figure (eof)
-ax.append(f.add_subplot(gs[0, 1])) # Colorbar for main figure
+# Generate a t-axis from the datetime format
+y_min = fmatrix_ts.coords['sink_time'].values[0].astype('datetime64[Y]').astype(int) + 1970
+n_year = int(len(fmatrix_ts.coords['sink_time'].values)/12)
+t_axis = np.linspace(y_min + 1/24, y_min + n_year - 1/24, num=n_year*12)
 
-land_10m = cfeature.NaturalEarthFeature('physical', 'land', '10m',
-                                        edgecolor='white',
-                                        facecolor='black',
-                                        zorder=1)
-ax[0].set_aspect(1)
+ax.set_xlim([y_min, y_min + n_year])
 
-# Plot correlations
-corr_plot = ax[0].contourf(fmatrix.coords['longitude'], fmatrix.coords['latitude'], corr.T,
-                           cmap=cmr.fall_r, transform=ccrs.PlateCarree(), extend='neither',
-                           levels=np.linspace(0, 1, 11), rasterized=True)
-sig_plot1 = ax[0].contourf(fmatrix.coords['longitude'], fmatrix.coords['latitude'], corr_p_eff.where((corr_p_eff > 0.01)*(corr_p_eff <= 0.05)).T,
-                            levels=np.array([0.01, 0.05]), hatches=['/'], colors='none')
-sig_plot2 = ax[0].contourf(fmatrix.coords['longitude'], fmatrix.coords['latitude'], corr_p_eff.where(corr_p_eff <= 0.01).T,
-                            levels=np.array([0, 0.01]), hatches=['.'], colors='none')
+for site_i, site in enumerate(param['sink']):
+    ax.plot(t_axis, fmatrix_ts.loc[site, :].sum('sink'),
+               param['linestyle'][site_i], c=param['linecolor'][site_i],
+               label=param['sink_name'][site_i] + ' (' + param['name'] + ')')
 
-ax[0].add_feature(land_10m)
-gl = ax[0].gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
-                      linewidth=0.5, color='white', linestyle='--', zorder=11)
-gl.xlocator = mticker.FixedLocator(np.arange(-210, 210, 10))
-gl.ylocator = mticker.FixedLocator(np.arange(-90, 120, 10))
-gl.xlabels_top = False
-gl.ylabels_right = False
-gl.ylabel_style = {'size': 24}
-gl.xlabel_style = {'size': 24}
+legend = ax.legend(loc="upper right", fontsize=20)
+legend.get_frame().set_linewidth(0)
 
-title = 'Seasonal correlation'
-ax[0].text(22, -38, title, fontsize=32, color='k', fontweight='bold')
-ax[0].set_xlim([20.5, 129.5])
-ax[0].set_ylim([-39.5, 29.5])
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
 
-if param['time'] == 'sink':
-    ax[0].set_title(param['name'] + ' (Beaching time)', fontsize=32, color='k', fontweight='bold')
-else:
-    ax[0].set_title(param['name'] + ' (Source time)', fontsize=32, color='k', fontweight='bold')
+ax.set_ylabel('Monthly beaching debris (kg)', fontsize=22)
+ax.set_xlabel('Beaching year', fontsize=22)
+ax.set_xticks(np.arange(1997, 2015, 2))
+ax.tick_params(axis='x', labelsize=22)
+ax.tick_params(axis='y', labelsize=22)
+ax.grid(axis='x')
+ax.set_yscale('log')
+plt.savefig(fh['fig'] + '_full.pdf' , dpi=300, bbox_inches="tight")
 
-cb0 = plt.colorbar(corr_plot, cax=ax[1], fraction=0.1)
-ax[1].tick_params(axis='y', labelsize=24)
-cb0.set_label('Correlation', size=28)
-cb0.set_ticks(np.linspace(0, 1, 6))
+# NOW CALCULATE A MONTHLY CLIMATOLOGY FOR  SINK TIME
+f, ax = plt.subplots(1, 1, figsize=(20, 6))
+fmatrix_sinkt = fmatrix[:, :, :, 24:264].sum(dim=('source_time', 'source'))
+abs_max = []
+abs_min = []
 
-# Save
-plt.savefig(dirs['fig'] + 'Seasonal_correlation_' + param['time'] + '_' + param['physics'] + '_' + array_str + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.pdf', bbox_inches='tight', dpi=300)
+for site_i, site in enumerate(param['sink']):
+    norm_ts = fmatrix_sinkt.loc[site, :].sum('sink')/fmatrix_sinkt.loc[site, :].sum('sink').mean()
+    monclim = np.zeros((12,))
+    monmin = np.zeros((12,))
+    monmax = np.zeros((12,))
+    monstd = np.zeros((12,))
 
-##############################################################################
-# PLOT PHASE                                                                 #
-##############################################################################
+    for m in range(12):
+        monclim[m] = np.mean(norm_ts[m::12])
+        monmin[m] = np.min(norm_ts[m::12])
+        monmax[m] = np.max(norm_ts[m::12])
+        monstd[m] = np.std(norm_ts[m::12])
 
-# # Convert phase to peak month (0 -> Jan, 1 -> Feb, -1 -> Dec...)
-phase *= 6/np.pi
-phase[phase < 0] = phase[phase < 0] + 12
+    abs_max.append(np.max(monmax))
+    abs_min.append(np.min(monmin))
 
-# Plot
+    ax.fill_between(np.arange(1, 13), monmin, monmax,
+                    color=param['linecolor'][site_i], alpha=0.1)
+    ax.plot(np.arange(1, 13), monclim, marker=param['symbol'][site_i], ms=10,
+            c=param['linecolor'][site_i], ls=param['linestyle'][site_i],
+            label=param['sink_name'][site_i] + ' (' + param['name'] + ')')
 
-f = plt.figure(figsize=(21, 11.9), constrained_layout=True)
-gs = GridSpec(1, 2, figure=f, width_ratios=[0.99, 0.01])
-ax = []
-ax.append(f.add_subplot(gs[0, 0], projection = ccrs.PlateCarree())) # Main figure (eof)
-ax.append(f.add_subplot(gs[0, 1])) # Colorbar for main figure
 
-land_10m = cfeature.NaturalEarthFeature('physical', 'land', '10m',
-                                        edgecolor='white',
-                                        facecolor='black',
-                                        zorder=1)
-ax[0].set_aspect(1)
+abs_max_lim = 1.05*np.max(abs_max)
+abs_min_lim = 0.95*np.min(abs_min)
 
-# Plot phase offset
-corr_plot = ax[0].pcolormesh(fmatrix.coords['longitude'], fmatrix.coords['latitude'], phase.T,
-                             cmap=cmr.infinity_s, transform=ccrs.PlateCarree(), rasterized=True)
-sig_plot1 = ax[0].contourf(fmatrix.coords['longitude'], fmatrix.coords['latitude'], corr_p_eff.where((corr_p_eff > 0.01)*(corr_p_eff <= 0.05)).T,
-                            levels=np.array([0.01, 0.05]), hatches=['/'], colors='none')
-sig_plot2 = ax[0].contourf(fmatrix.coords['longitude'], fmatrix.coords['latitude'], corr_p_eff.where(corr_p_eff <= 0.01).T,
-                            levels=np.array([0, 0.01]), hatches=['.'], colors='none')
+ax.set_xlim([1, 12])
+legend = ax.legend(loc="upper right", fontsize=20)
+legend.get_frame().set_linewidth(0)
 
-ax[0].add_feature(land_10m)
-gl = ax[0].gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
-                      linewidth=0.5, color='white', linestyle='--', zorder=11)
-gl.xlocator = mticker.FixedLocator(np.arange(-210, 210, 10))
-gl.ylocator = mticker.FixedLocator(np.arange(-90, 120, 10))
-gl.xlabels_top = False
-gl.ylabels_right = False
-gl.ylabel_style = {'size': 24}
-gl.xlabel_style = {'size': 24}
+ax.fill_between([0, 2.5], [abs_max_lim, abs_max_lim],
+               color='none', hatch='/', edgecolor='k', linewidth=0)
+ax.fill_between([11.5, 12.5], [abs_max_lim, abs_max_lim],
+               color='none', hatch='/', edgecolor='k', linewidth=0)
+ax.fill_between([5.5, 8.5], [abs_max_lim, abs_max_lim],
+               color='none', hatch='\\', edgecolor='k', linewidth=0)
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
 
-title = 'Seasonal cycle peak'
-ax[0].text(22, -38, title, fontsize=32, color='k', fontweight='bold')
-ax[0].set_xlim([20.5, 129.5])
-ax[0].set_ylim([-39.5, 29.5])
-
-if param['time'] == 'sink':
-    ax[0].set_title(param['name'] + ' beaching time', fontsize=36, color='k', fontweight='bold')
-else:
-    ax[0].set_title(param['name'] + ' source time', fontsize=36, color='k', fontweight='bold')
-
-cb0 = plt.colorbar(corr_plot, cax=ax[1], fraction=0.1)
-ax[1].tick_params(axis='y', labelsize=24)
-cb0.set_label('Peak month', size=28)
-cb0.set_ticks(np.linspace(0.5, 11.5, 12))
-cb0.set_ticklabels(['January', 'February', 'March', 'April', 'May', 'June',
-                    'July', 'August', 'September', 'October', 'November', 'December'])
-cb0.ax.invert_yaxis()
-# Save
-plt.savefig(dirs['fig'] + 'Seasonal_phase_' + param['time'] + '_' + param['physics'] + '_' + array_str + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.pdf', bbox_inches='tight', dpi=300)
+ax.set_ylabel('Normalised beaching rate', fontsize=22)
+ax.set_xlabel('Beaching month', fontsize=22)
+ax.set_yscale('log')
+ax.set_xticks(np.arange(1, 13, 1))
+# ax.set_yticks(np.arange(20))
+ax.tick_params(axis='x', labelsize=22)
+ax.tick_params(axis='y', labelsize=22)
+ax.set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul',
+                      'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+ax.set_ylim([abs_min_lim, abs_max_lim])
+# ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
+plt.savefig(fh['fig'] + '_monclim.pdf' , dpi=300, bbox_inches="tight")

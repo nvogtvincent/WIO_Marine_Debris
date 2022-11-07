@@ -20,7 +20,7 @@ from matplotlib.gridspec import GridSpec
 param = {# Analysis parameters
          'us_d': [30.0, 90.0, 360.0],  # Sinking timescale (days)
          'ub_d': [30.0, 30.0, 30.0],   # Beaching timescale (days)
-         'physics': ['0000', '0010', '0030'],
+         'physics': ['CS0', 'CS1', 'CS3'],
          'name': ['Class A', 'Class B', 'Class C'],
 
          # Sink
@@ -51,7 +51,7 @@ param = {# Analysis parameters
 
 # DIRECTORIES
 dirs = {'script': os.path.dirname(os.path.realpath(__file__)),
-        'data': os.path.dirname(os.path.realpath(__file__)) + '/../POSTPROC/',
+        'data': os.path.dirname(os.path.realpath(__file__)) + '/../MATRICES/',
         'ref': os.path.dirname(os.path.realpath(__file__)) + '/../REFERENCE/',
         'fig': os.path.dirname(os.path.realpath(__file__)) + '/../FIGURES/'}
 

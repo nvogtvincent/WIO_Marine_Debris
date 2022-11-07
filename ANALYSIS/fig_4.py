@@ -8,230 +8,246 @@ Visualise marine debris results
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as colors
-import matplotlib.ticker as mticker
 import cmasher as cmr
 import xarray as xr
-from matplotlib import ticker
-from osgeo import gdal, osr
 from skimage.measure import block_reduce
-from matplotlib.gridspec import GridSpec
 from sys import argv
-from scipy.ndimage import gaussian_filter
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-import rasterio
+import pickle
 
 # PARAMETERS
-param = {'grid_res': 1.0,                          # Grid resolution in degrees
-         'lon_range': [20, 130],                   # Longitude range for output
-         'lat_range': [-40, 30],                   # Latitude range for output
-
-         # Analysis parameters
-         'us_d': argv[1],    # Sinking timescale (days)
-         'ub_d': argv[2],      # Beaching timescale (days)
-
-         # Time range
-         'y0'  : 1993,
-         'y1'  : 2012,
+param = {# Analysis parameters
+         'us_d': float(argv[1]),    # Sinking timescale (days)
+         'ub_d': float(argv[2]),      # Beaching timescale (days)
 
          # Physics
          'mode': argv[3],
 
-         # Source/sink time
-         'time': 'sink',
+         # Name
+         'name': argv[4],
 
-         # Sink sites
-         'sites': np.array([13,14,15,16,17,18]),
-
-         # Names
-         'sink': 'Seychelles Plateau',
-         'class': argv[4],
-
-         # Plot ship tracks
-         'tracks': True,
+         # CMAP
+         'cmap': cmr.guppy_r,
+         'write_cmap': False, # Whether to write cmap data (good w/ 100/0010)
+         'n_source': 10,
 
          # Export
+         'drift': False,
+         'legend': True,
          'export': True}
 
 # DIRECTORIES
 dirs = {'script': os.path.dirname(os.path.realpath(__file__)),
-        'data': os.path.dirname(os.path.realpath(__file__)) + '/../POSTPROC/',
-        'fisheries': os.path.dirname(os.path.realpath(__file__)) + '/../FISHERIES/DATA/PROC/',
-        'shipping': os.path.dirname(os.path.realpath(__file__)) + '/../SHIPPING/',
+        'data': os.path.dirname(os.path.realpath(__file__)) + '/../MATRICES/',
+        'plastic': os.path.dirname(os.path.realpath(__file__)) + '/../PLASTIC_DATA/',
         'fig': os.path.dirname(os.path.realpath(__file__)) + '/../FIGURES/'}
 
 # FILE HANDLES
-array_str = np.array2string(param['sites'], separator='-').translate({ord(i): None for i in '[]'})
-fh = {'flux': dirs['data'] + '/marine_clim_flux_' + param['mode'] + '_' + array_str + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.nc',
-      'debris': dirs['fisheries'] + 'IOTC_monclim.nc',
-      'shipping': dirs['shipping'] + 'global_shipping.tif'}
+fh = {'flux': dirs['data'] + '/terrestrial_flux_' + param['mode'] + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.nc',
+      'drift_time': dirs['data'] + '/terrestrial_drift_time_' + param['mode'] + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.nc',
+      'source_list': dirs['plastic'] + 'country_list.in',
+      'sink_list': dirs['plastic'] + 'sink_list.in',
+      'cmap': dirs['fig'] + 'cmap_data.pkl',
+      'fig1': dirs['fig'] + 'terrestrial_sources_' + param['mode'] + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.pdf',
+      'fig2': dirs['fig'] + 'terrestrial_drift_time_' + param['mode'] + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.pdf'}
 
-n_years = param['y1']-param['y0']+1
+
 ##############################################################################
 # LOAD DATA                                                                  #
 ##############################################################################
 
 fmatrix = xr.open_dataarray(fh['flux'])
+if param['drift']:
+    dtmatrix = xr.open_dataarray(fh['drift_time'])
 
-# Sum over all sink months
-fmatrix = fmatrix.sum(dim='sink_month')
+# Calculate the accumulated fluxes (integrating over all source and sink times)
+fmatrix = fmatrix.sum(dim=('sink_time', 'source_time'))
 
-# Find proportion of released debris that arrived at site by dividing by the
-# total number released from each cell, i.e. 36*4*12 per year
-fmatrix = fmatrix/(1728*n_years)
+##############################################################################
+# PROCESS DATA                                                               #
+##############################################################################
 
-# Now degrade resolution by factor 12 (-> 1deg)
-fmatrix12 = fmatrix.coarsen(latitude=12, longitude=12).mean()
+if param['write_cmap']:
+    # Calculate the 10 most significant source countries (normalised per sink)
+    # source_norm = np.array([fmatrix.loc[:, sink]/(fmatrix.sum(dim='source').loc[sink]) for sink in fmatrix.coords['sink']])
+    fmatrix_norm = fmatrix/fmatrix.sum(dim='source')
+    fmatrix_pop = fmatrix_norm.sum(dim='sink')
+    fmatrix_pop = fmatrix_pop.sortby(fmatrix_pop, ascending=False)
+    fmatrix_pop[fmatrix_pop['source'] == 'Other'] = fmatrix_pop[param['n_source']-2]-1e-6 # Hack to make sure 'other' is included
+    fmatrix_pop = fmatrix_pop.sortby(fmatrix_pop, ascending=False)
 
-# Open debris input functions (from fisheries)
-debris = xr.open_dataset(fh['debris'])
+    l1_source = fmatrix_pop[:param['n_source']]
+    l2_source = fmatrix_pop[param['n_source']:]
 
-# Open ship tracks
-with rasterio.open(fh['shipping']) as src:
-    sf = 10
-    img = block_reduce(src.read(1), block_size=(sf, sf), func=np.sum)
-    height = img.shape[0]
-    width = img.shape[1]
-    cols, rows = np.meshgrid(np.arange(0, width*10, sf), np.arange(0, height*10, sf))
-    xs, ys = rasterio.transform.xy(src.transform, rows, cols)
-    lons= np.array(xs)
-    lats = np.array(ys)
+    # # Now check that the top source for each sink is represented
+    # for sink in fmatrix.coords['sink']:
+    #     top_sources = fmatrix[:, fmatrix['sink'] == sink]
+    #     top_source = top_sources.sortby(top_sources[:,0])[-1].coords['source']
+    #     listy.append(top_source.values)
+    #     if not top_source.isin(l1_source.coords['source']).values:
+    #         print()
 
-    # Apply gaussian filter to improve contourf quality
-    img = gaussian_filter(img, sigma=1)
+    other_flux = fmatrix[fmatrix['source'].isin(l2_source.coords['source'])].sum(dim='source')
+
+    fmatrix = fmatrix[fmatrix['source'].isin(l1_source.coords['source'])]
+    fmatrix[fmatrix['source'] == 'Other'] = other_flux
+    fmatrix = fmatrix.sortby(fmatrix_pop, ascending=False)
+    fmatrix = fmatrix/fmatrix.sum(dim='source')
+
+    # Generate cmapping
+    cmap_list = [param['cmap'](i) for i in np.linspace(0, param['cmap'].N, num=param['n_source'], dtype=int)]
+    cmap_list = dict(zip(l1_source.coords['source'].values, cmap_list))
+
+    with open(fh['cmap'], 'wb') as pkl:
+        pickle.dump(cmap_list, pkl, protocol=pickle.HIGHEST_PROTOCOL)
+
+    # Now repeat for dtmatrix
+    if param['drift']:
+        other_dt = dtmatrix[dtmatrix['source'].isin(l2_source.coords['source'])].sum(dim='source')
+        dtmatrix = dtmatrix[dtmatrix['source'].isin(l1_source.coords['source'])]
+        dtmatrix[dtmatrix['source'] == 'Other'] = other_dt
+        dtmatrix = dtmatrix.sortby(fmatrix_pop, ascending=False)
+        dtmatrix = dtmatrix/dtmatrix.sum(dim=('source', 'drift_time'))
+
+else:
+    with open(fh['cmap'], 'rb') as pkl:
+        cmap_list = pickle.load(pkl)
+
+    l1_source = list(cmap_list.keys())
+    other_flux = fmatrix[~fmatrix['source'].isin(l1_source)].sum(dim='source')
+
+    fmatrix_norm = fmatrix/fmatrix.sum(dim='source')
+    fmatrix_pop = fmatrix_norm.sum(dim='sink')
+    fmatrix_pop = fmatrix_pop.sortby(fmatrix_pop, ascending=False)
+    fmatrix_pop[fmatrix_pop['source'] == 'Other'] = fmatrix_pop[param['n_source']-2]-1e-6
+    fmatrix_pop = fmatrix_pop.sortby(fmatrix_pop, ascending=False)
+    fmatrix = fmatrix[fmatrix['source'].isin(l1_source)]
+    fmatrix[fmatrix['source'] == 'Other'] = other_flux
+    fmatrix = fmatrix/fmatrix.sum(dim='source')
+
+    # fmatrix_norm.loc[:, 'Reunion'].sortby(fmatrix_norm.loc[:, 'Reunion'], ascending=False).coords['source']
+    # Reorder
+    fmatrix_order = fmatrix_pop.copy()
+    fmatrix_order = fmatrix_order[fmatrix_order['source'].isin(l1_source)]
+    for i in range(param['n_source']):
+        source_name = l1_source[i]
+        fmatrix_order[fmatrix_order['source'] == source_name] = i
+
+    fmatrix = fmatrix.sortby(fmatrix_order)
+
+    # Repeat for dtmatrix
+    if param['drift']:
+        other_dt = dtmatrix[~dtmatrix['source'].isin(l1_source)].sum(dim='source')
+        dtmatrix = dtmatrix[dtmatrix['source'].isin(l1_source)]
+        dtmatrix[dtmatrix['source'] == 'Other'] = other_dt
+        dtmatrix = dtmatrix.sortby(fmatrix_order, ascending=True)
+        dtmatrix = dtmatrix/dtmatrix.sum(dim=('source', 'drift_time'))
 
 ##############################################################################
 # PLOT                                                                       #
 ##############################################################################
 
-f = plt.figure(constrained_layout=True, figsize=(27, 11))
-gs = GridSpec(2, 4, figure=f, width_ratios=[2, 0.03, 0.98, 0.03], height_ratios=[1, 1])
-ax = []
-ax.append(f.add_subplot(gs[:, 0], projection = ccrs.PlateCarree())) # Main figure (flux probability)
-ax.append(f.add_subplot(gs[:, 1])) # Colorbar for main figure
-ax.append(f.add_subplot(gs[0, 2], projection = ccrs.PlateCarree())) # Fisheries 1
-ax.append(f.add_subplot(gs[1, 2], projection = ccrs.PlateCarree())) # Fisheries 2
-ax.append(f.add_subplot(gs[:, 3])) # Colorbar for fisheries
+if param['legend']:
+    f, ax = plt.subplots(1, 1, figsize=(20, 8))
+else:
+    f, ax = plt.subplots(1, 1, figsize=(20, 8))
 
-gl = []
-hist = []
+# Set up grouping
+spacing = 1
+width = 0.8
 
-land_10m = cfeature.NaturalEarthFeature('physical', 'land', '10m',
-                                        edgecolor='k',
-                                        facecolor='w',
-                                        zorder=1)
+# Hack to get legend in the correct order
+for j in range(param['n_source']):
+    ax.bar(0, 0, 0, color=cmap_list[fmatrix.coords['source'].values[j]],
+           label=fmatrix.coords['source'].values[j])
 
-land_10k = cfeature.NaturalEarthFeature('physical', 'land', '10m',
-                                        edgecolor='w',
-                                        facecolor='k',
-                                        zorder=1)
+sites_per_group = np.array([4, 2, 1, 3, 2, 6, 9])
+xpos = []
+grp_mp = np.zeros_like(sites_per_group)
 
-n_lon = param['lon_range'][1] - param['lon_range'][0]
-n_lat = param['lat_range'][1] - param['lat_range'][0]
+n_sink = len(fmatrix.coords['sink'])
+assert n_sink == np.sum(sites_per_group)
 
-lon_bnd1 = np.linspace(param['lon_range'][0], param['lon_range'][1], num=int(n_lon)+1)
-lat_bnd1 = np.linspace(param['lat_range'][0], param['lat_range'][1], num=int(n_lat)+1)
+grp, pos_in_grp = 0, -1
+for i in range(len(fmatrix.coords['sink'])):
+    xpos_ = xpos[-1] + spacing if i > 0 else spacing
+    pos_in_grp += 1
 
-for i in [0, 2, 3]:
-    ax[i].set_aspect(1)
-    ax[i].set_facecolor('k')
+    if pos_in_grp == sites_per_group[grp]:
+        xpos_ += spacing
+        pos_in_grp = 0
+        grp += 1
 
-# Total flux
-hist.append(ax[0].pcolormesh(lon_bnd1, lat_bnd1,
-                             fmatrix12.sum(dim='source_month'), cmap=cmr.sunburst_r,
-                             norm=colors.LogNorm(vmin=1e-5, vmax=1e-2),
-                             transform=ccrs.PlateCarree()))
+    grp_mp[grp] += xpos_
+    xpos.append(xpos_)
 
-ax[0].add_feature(land_10k)
-gl.append(ax[0].gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
-                          linewidth=0.5, color='white', linestyle='-', zorder=11))
-gl[0].xlocator = mticker.FixedLocator(np.arange(-210, 210, 10))
-gl[0].ylocator = mticker.FixedLocator(np.arange(-90, 120, 10))
-gl[0].xlabels_top = False
-gl[0].ylabels_right = False
-gl[0].ylabel_style = {'size': 20}
-gl[0].xlabel_style = {'size': 20}
-ax[0].text(21, -39, 'Likelihood of ' + param['class'] + ' debris beaching at ' + param['sink'], fontsize=28, color='k', fontweight='bold')
-ax[0].set_xlim([20, 120])
-ax[0].set_ylim([-40, 30])
+grp_mp = grp_mp/sites_per_group
 
-# Add an overlay with ship tracks
-if param['tracks']:
-    thresh = 1e7
-    img = np.ma.masked_where(img < thresh, img)
-    sig_plot = ax[0].contourf(lons, lats, img,
-                              levels=np.array([thresh, np.max(img)*2]), colors='none', hatches=['\\\\\\'])
+cmap = param['cmap']
+cmaplist = [cmap(i) for i in range(cmap.N)]
 
+source_list_for_legend = []
 
-cb0 = plt.colorbar(hist[0], cax=ax[1], fraction=0.05)
-cb0.set_label('Mass fraction', size=24)
-ax[1].tick_params(axis='y', labelsize=22)
+for i in range(n_sink):
+    cumsum = 0
 
-fishing_cmap = cmr.torch_r
+    for j in range(param['n_source']):
+        ax.bar(xpos[i], fmatrix[j, i], width, bottom=cumsum, color=cmap_list[fmatrix.coords['source'].values[j]])
 
-# Input from purse seiners
-ps_input = debris.ps_effort.transpose('lat', 'lon', 'month').rename({'lat': 'latitude',
-                                                                     'lon': 'longitude',
-                                                                     'month': 'source_month'})
-ps_input.coords['longitude'] = fmatrix12.longitude.values # Have to reset this due to float issue
-ps_input.coords['latitude'] = fmatrix12.latitude.values # Have to reset this due to float issue
+        cumsum += fmatrix[j, i]
 
-ps_flux = (ps_input*fmatrix12).sum(dim='source_month')
-hist.append(ax[2].pcolormesh(lon_bnd1, lat_bnd1,
-                             ps_flux/ps_flux.sum(),
-                             cmap=fishing_cmap, norm=colors.LogNorm(vmin=1e-4, vmax=1e-1),
-                             transform=ccrs.PlateCarree()))
-ax[2].add_feature(land_10k)
-ax[2].text(21, -39, param['class'] + ' purse-seine debris', fontsize=22, color='k', fontweight='bold', zorder=12)
-ax[2].set_facecolor('w')
-ax[2].set_extent([20, 120, -40, 30], crs=ccrs.PlateCarree())
+grp_mp = np.concatenate((grp_mp[:-1], xpos[-9:]))
 
-# Input from drifting and set longlines
-ll_input = debris.ll_effort.transpose('lat', 'lon', 'month').rename({'lat': 'latitude',
-                                                                     'lon': 'longitude',
-                                                                     'month': 'source_month'})
-ll_input.coords['longitude'] = fmatrix12.longitude.values # Have to reset this due to float issue
-ll_input.coords['latitude'] = fmatrix12.latitude.values # Have to reset this due to float issue
+ax.set_xticks(grp_mp)
+ax.set_xticklabels(['ALD', 'FAR', 'ALP',
+                    'AMI', 'SCG', 'SEY',
+                    '1', '2', '3', '4', '5', '6', '7', '8', '9'], fontsize=24)
+ax.tick_params(axis='y', labelsize=24)
 
-ll_flux = (ll_input*fmatrix12).sum(dim='source_month')
-ll_flux = ll_flux.coarsen(longitude=5, latitude=5).sum() # Re-degrade
+ax.set_ylim([0, 1])
+ax.set_xlim([xpos[0]-width, xpos[-1]+width])
+ax.spines['left'].set_visible(False)
+ax.spines['right'].set_visible(False)
+ax.spines['top'].set_visible(False)
+ax.spines['bottom'].set_visible(False)
+ax.set_ylabel('Proportion of terrestrial debris', fontsize=24)
+ax.set_title(param['name'] + ' debris sources', fontsize=28, color='k', fontweight='bold', pad=12)
 
-hist.append(ax[3].pcolormesh(lon_bnd1[::5], lat_bnd1[::5],
-                             ll_flux/ll_flux.sum(),
-                             cmap=fishing_cmap, norm=colors.LogNorm(vmin=1e-4, vmax=1e-1),
-                             transform=ccrs.PlateCarree()))
-ax[3].add_feature(land_10k)
-ax[3].text(21, -39, param['class'] + ' longline debris', fontsize=22, color='k', fontweight='bold', zorder=12)
-ax[3].set_facecolor('w')
-ax[3].set_extent([20, 120, -40, 30], crs=ccrs.PlateCarree())
+if param['legend']:
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.3), ncol=int(param['n_source']/2),
+              frameon=False, fontsize=24)
 
-cb1 = plt.colorbar(hist[1], cax=ax[4])
-cb1.set_label('Normalised risk from fishery', size=24)
-ax[4].tick_params(axis='y', labelsize=22)
+plt.savefig(fh['fig1'], dpi=300, bbox_inches="tight")
 
-for ii, i in enumerate([2, 3]):
-    gl.append(ax[i].gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
-                              linewidth=0.5, color='k', linestyle='-', zorder=11))
-    gl[ii+1].xlocator = mticker.FixedLocator(np.arange(0, 240, 20))
-    gl[ii+1].ylocator = mticker.FixedLocator(np.arange(-80, 80, 20))
-    gl[ii+1].ylabel_style = {'size': 20}
-    gl[ii+1].xlabel_style = {'size': 20}
-    gl[ii+1].xlabels_top = False
-    gl[ii+1].ylabels_right = False
-    gl[ii+1].ylabels_left = True
-    if ii == 1:
-        gl[ii+1].xlabels_bottom = True
-    else:
-        gl[ii+1].xlabels_bottom = False
+# Now plot a mass-time histogram for Aldabra only
+if param['drift']:
+    reduction_ratio = 2
+    dpy = 365
+    new_time_axis = block_reduce(dtmatrix.coords['drift_time'], (reduction_ratio,), func=np.mean)/365
+    width = new_time_axis[1] - new_time_axis[0]
+    site_chosen = 'Alphonse'
+    f, ax = plt.subplots(1, 1, figsize=(40, 7), constrained_layout=True)
+    cumsum = np.zeros_like(block_reduce(dtmatrix.loc[dtmatrix.coords['source'].values[j], site_chosen, :], block_size=(reduction_ratio,), func=np.sum))
 
-if param['export']:
-    plt.savefig(dirs['fig'] + 'marine_sources_' + param['mode'] + '_' + np.array2string(param['sites'], separator='-') + '_s' + str(param['us_d']) + '_b' + str(param['ub_d']) + '.pdf', bbox_inches='tight', dpi=300)
+    # Hack to get legend in the correct order
+    for j in range(param['n_source']):
+        ax.bar(0, 0, 0, color=cmap_list[fmatrix.coords['source'].values[j]],
+               label=fmatrix.coords['source'].values[j])
 
+    for j in range(param['n_source']):
+        ax.bar(new_time_axis,
+               block_reduce(dtmatrix.loc[dtmatrix.coords['source'].values[j], site_chosen, :], (reduction_ratio,), func=np.sum),
+               width, bottom=cumsum, color=cmap_list[dtmatrix.coords['source'].values[j]])
+        cumsum += block_reduce(dtmatrix.loc[dtmatrix.coords['source'].values[j], site_chosen, :], (reduction_ratio,), func=np.sum)
 
-
-
-
-
-
-
+    ax.set_xlim([0, 5])
+    ax.spines['left'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    # ax.set_ylabel('Proportion of terrestrial debris from source', fontsize=36)
+    ax.set_xlabel('Drifting time (years)', fontsize=24)
+    ax.tick_params(axis='x', labelsize=20)
+    ax.set_yticklabels([])
+    # ax.legend(loc="lower center", bbox_to_anchor=(0.5, -1), ncol=param['n_source'],
+    #           frameon=False, fontsize=28)
+    plt.savefig(fh['fig2'], dpi=300, bbox_inches="tight")
