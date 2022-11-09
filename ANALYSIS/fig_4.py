@@ -213,7 +213,7 @@ ax.spines['top'].set_visible(False)
 ax.spines['bottom'].set_visible(False)
 ax.set_ylabel('Proportion of terrestrial debris', fontsize=24)
 if param['name'] == '':
-    ax.set_title('$1/\mu_b=$' + str(int(param['us_d'])) + 'd, ' + '$1/\mu_s=$' + str(int(param['ub_d'])) + 'd, ' + param['mode'], fontsize=28, color='k', pad=12)
+    ax.set_title('$1/\mu_s=$' + str(int(param['us_d'])) + 'd, ' + '$1/\mu_b=$' + str(int(param['ub_d'])) + 'd, ' + param['mode'], fontsize=28, color='k', pad=12)
 else:
     ax.set_title(param['name'] + ' debris sources', fontsize=28, color='k', fontweight='bold', pad=12)
 
