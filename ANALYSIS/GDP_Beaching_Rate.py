@@ -186,31 +186,34 @@ np.save(fh['data_out'] + 'coast_time.npy', coast_time)
 # DERIVE BEACHING RATE ########################################################
 ###############################################################################
 
-max_ct = 20
-ct_int = 11
+# Keep track of some basic statistics
+stats = {'rejected_latitude': 0,  # Rejected due to latitude bounds
+         'rejected_no_coast': 0,  # Rejected due to no coastal intercept
+         'coast_no_beach': 0,     # Valid, no beaching event
+         'coast_beach': 0}        # Valid, beaching event
+
+max_ct = 15
 num_samples = max_ct+1
+time_axis = np.linspace(0, max_ct, num=max_ct+1)
 
-bath_beach_arr = np.array(bath_beach_arr)
-prox_beach_arr = np.array(prox_beach_arr)
-meta_beach_arr = np.array(meta_beach_arr)
-coast_time = np.array(coast_time)
-
-# Create three beaching classes: bath+prox, meta, bath+prox+metae
 beach_arr = []
-beach_arr.append(bath_beach_arr + prox_beach_arr) # Class 1 (manual)
+beach_arr.append(prox_beach_arr) # Class 1 (proximity)
+beach_arr.append(bath_beach_arr) # Class 1 (bathymetry)
 beach_arr.append(meta_beach_arr) # Class 2 (meta)
-beach_arr.append(bath_beach_arr + prox_beach_arr + meta_beach_arr) # Class 3 (all)
+beach_arr.append(kaandorp_beach_arr) # Class 3 (Kaandorp)
 
-title_arr = ['Bathymetry and proximity criteria',
-             'GDP Death Code',
-             'All criteria']
+title_arr = ['Proximity criterion',
+             'Bathymetry criterion',
+             'GDP Death code',
+             'Kaandorp criterion']
 
 beach_arr[0][beach_arr[0] > 0] = 1
 beach_arr[1][beach_arr[1] > 0] = 1
 beach_arr[2][beach_arr[2] > 0] = 1
+beach_arr[3][beach_arr[3] > 0] = 1
 
 # Create time array (i.e. x axis, limits for binning)
-time_array_bnd = np.linspace(0, max_ct, num=ct_int)
+time_array_bnd = np.linspace(0, max_ct, num=max_ct+1)
 time_array =  0.5*(time_array_bnd[1:] + time_array_bnd[:-1]) # x axis for plot
 
 # Create figure
