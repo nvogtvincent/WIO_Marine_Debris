@@ -1,6 +1,8 @@
 # WIO_Marine_Debris
 Repository for scripts used to reproduce figures in "Sources of marine debris for Seychelles and other remote islands in the western Indian Ocean"
 
+If you use our data and/or scripts for a publication or other application, it would be greatly appreciated if you could let us know!
+
 ## Directory overview
 ```
 ANALYSIS/         Scripts to reproduce figures
